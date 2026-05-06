@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  brain-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - .:/app  # Mount root to allow loading oulad_brain_state.json
+    environment:
+      - BRAIN_STATE_PATH=oulad_brain_state.json
+    restart: always
+
+  brain-dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
+    ports:
+      - "8502:8501"  # Updated to 8502 to match our current usage
+    volumes:
+      - ./data:/app/data
+      - .:/app  # Allow monitoring of checkpoint files
+    environment:
+      - STREAMLIT_SERVER_HEADLESS=true
+    depends_on:
+      - brain-api
+    restart: always

@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "linucb-brain"
+version = "0.1.0"
+description = "Contextual Bandit-powered learning personalization engine"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "numpy>=1.20.0",
+    "scipy>=1.7.0",
+    "fastapi>=0.70.0",
+    "uvicorn>=0.15.0",
+    "pydantic>=1.8.0",
+    "scikit-learn>=1.0.0",
+]
+authors = [
+    { name = "Jazzman", email = "divinenwobodo19@gmail.com" },
+]
+license = { text = "MIT" }
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["linucb_brain*"]
