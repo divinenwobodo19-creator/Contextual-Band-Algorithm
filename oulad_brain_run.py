@@ -47,9 +47,19 @@ def get_latest_checkpoint():
     if not checkpoints:
         return None
     
-    # Improved sorting using the shared extraction logic
-    checkpoints.sort(key=get_checkpoint_index)
-    return checkpoints[-1]
+    # Separate regular and emergency checkpoints
+    regular_cps = [cp for cp in checkpoints if "emergency" not in cp]
+    emergency_cps = [cp for cp in checkpoints if "emergency" in cp]
+    
+    # Prioritize regular checkpoints first
+    if regular_cps:
+        regular_cps.sort(key=get_checkpoint_index)
+        return regular_cps[-1]
+    elif emergency_cps:
+        emergency_cps.sort(key=get_checkpoint_index)
+        return emergency_cps[-1]
+    else:
+        return None
 
 latest_cp = get_latest_checkpoint()
 
@@ -58,7 +68,7 @@ if latest_cp:
     brain = Brain.load(latest_cp)
     start_idx = get_checkpoint_index(latest_cp) * 1000
 else:
-    print("Initializing new Hybrid Brain", flush=True)
+    print ("NO checkpoint found,Starting fresh...", flush=True)
     brain = Brain(algorithm="hybrid", alpha=2.0, auto_diagnose_every=100000, track_sessions=True, max_sessions=50000) 
     start_idx = 0
 

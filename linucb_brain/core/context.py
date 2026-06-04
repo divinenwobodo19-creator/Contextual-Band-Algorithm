@@ -26,14 +26,14 @@ def build_context_split(student: Student, content: Content) -> Tuple[np.ndarray,
     sessions = log1p(getattr(student, 'session_count', 0)) / LOG_101
     
     # New demographic features from OULAD (mapped to metadata or attributes)
-    # INCREASE SCALING SIGNIFICANTLY to force higher distance
-    edu_level = getattr(student, 'education_level', 0.0) * 10.0
-    age_band = getattr(student, 'age_band', 0.0) * 10.0
-    credits_studied = getattr(student, 'credits_studied', 0.0) * 20.0
+    # BOOST SCALING EVEN MORE to force even higher distance between students
+    edu_level = getattr(student, 'education_level', 0.0) * 50.0
+    age_band = getattr(student, 'age_band', 0.0) * 50.0
+    credits_studied = getattr(student, 'credits_studied', 0.0) * 100.0
     
     # Adding IMD and Region for better student differentiation
-    imd_band = getattr(student, 'imd_band', 0.5) * 10.0
-    region_code = getattr(student, 'region_code', 0.0) * 10.0
+    imd_band = getattr(student, 'imd_band', 0.5) * 50.0
+    region_code = getattr(student, 'region_code', 0.0) * 50.0
     
     # Optimized slope: avoid polyfit if history is empty or small
     grade_history = getattr(student, 'grade_history', {})
@@ -76,10 +76,10 @@ def build_context_split(student: Student, content: Content) -> Tuple[np.ndarray,
     c_type = content.content_type
     one_hot = [1.0 if c_type == ct else 0.0 for ct in CONTENT_TYPES]
     
-    # Interaction terms - BOOST these to help sensitivity
-    perf_diff = performance * difficulty * 5.0
-    perf_video = performance * one_hot[0] * 5.0
-    perf_quiz = performance * one_hot[1] * 5.0
+    # Interaction terms - BOOST THESE A LOT to help sensitivity
+    perf_diff = performance * difficulty * 20.0
+    perf_video = performance * one_hot[0] * 20.0
+    perf_quiz = performance * one_hot[1] * 20.0
     
     x_arm = np.array([
         difficulty,

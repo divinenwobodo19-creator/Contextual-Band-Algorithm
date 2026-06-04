@@ -53,7 +53,7 @@ class LMS_Environment:
             diff = random.randint(1, 5)
             self.content_list.append({
                 "id": cid,
-                "title": f"{topic} {ctype} {i}",
+                "title": f"{topic} {ctype} {i}", 
                 "topic": topic,
                 "diff": diff,
                 "type": ctype
