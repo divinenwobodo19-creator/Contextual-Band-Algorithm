@@ -21,7 +21,7 @@ interrupted = False
 
 def signal_handler(sig, frame):
     global interrupted
-    print("\n🛑 Shutdown signal received. Saving state before exiting...", flush=True)
+    print("\nShutdown signal received. Saving state before exiting...", flush=True)
     interrupted = True
 
 # Register the signal handler for Ctrl+C
@@ -112,7 +112,7 @@ for i, row in enumerate(interactions_df.iloc[start_idx:].itertuples(), start=sta
         # Save emergency checkpoint
         emergency_cp = f"oulad_checkpoint_{i//1000}k_emergency.json"
         brain.save(emergency_cp)
-        print(f"💾 Emergency checkpoint saved at {i:,} to {emergency_cp}", flush=True)
+        print(f"Emergency checkpoint saved at {i:,} to {emergency_cp}", flush=True)
         sys.exit(0)
 
     brain.update( 

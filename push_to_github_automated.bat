@@ -5,7 +5,7 @@ REM  AUTOMATIC GITHUB PUSH SCRIPT (WINDOWS)
 REM ==============================================================================
 
 echo ========================================
-echo   🚀 PUSHING TO GITHUB AUTOMATICALLY!
+echo    PUSHING TO GITHUB AUTOMATICALLY!
 echo ========================================
 echo.
 
@@ -15,11 +15,11 @@ cd /d "%~dp0"
 REM Check if git is installed
 where git >nul 2>nul
 if %ERRORLEVEL% NEQ 0 (
-    echo ❌ Git is not installed! Please install git first!
+    echo Git is not installed! Please install git first!
     pause
     exit /b 1
 )
-echo ✅ Git is installed
+echo Git is installed
 
 REM Initialize git repo if not already initialized
 if not exist ".git" (
@@ -51,7 +51,7 @@ git push -u origin master 2>nul
 
 echo.
 echo ========================================
-echo   ✅ PUSH COMPLETED SUCCESSFULLY!
+echo    PUSH COMPLETED SUCCESSFULLY!
 echo ========================================
 echo Check your repo at https://github.com/divinenwobodo19-creator/Contextual-Band-Algorithm
 echo.

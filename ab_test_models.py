@@ -12,23 +12,23 @@ def main():
     print()
 
     # Step 1: Load a small test slice of OULAD data
-    print("📊 Loading test data from OULAD dataset...")
+    print("Loading test data from OULAD dataset...")
     interactions_df = pd.read_csv("data/oulad/interactions_clean.csv")
     agents_df = pd.read_csv("data/oulad/agents_clean.csv")
     arms_df = pd.read_csv("data/oulad/arms_clean.csv")
 
     # Use a test slice of 50,000 interactions
     test_slice = interactions_df.head(50000)
-    print(f"✅ Loaded {len(test_slice):,} test interactions!\n")
+    print(f"Loaded {len(test_slice):,} test interactions!\n")
 
     # Step 2: Initialize both models
-    print("🧠 Initializing models...")
+    print("Initializing models...")
     hybrid_brain = Brain(algorithm="hybrid", alpha=2.0, n_clusters=5)
     disjoint_brain = Brain(algorithm="disjoint", alpha=2.0)
-    print("✅ Models initialized!\n")
+    print("Models initialized!\n")
 
     # Step 3: Register students and content for both models
-    print("📝 Registering students and content...")
+    print("Registering students and content...")
     for row in tqdm(agents_df.itertuples(), total=len(agents_df), desc="Registering Students"):
         hybrid_brain.add_agent(str(row.agent_id), {
             "performance_score": row.performance_score,
@@ -58,10 +58,10 @@ def main():
             "difficulty": row.difficulty,
             "activity_type": row.activity_type
         })
-    print("✅ Students and content registered!\n")
+    print("Students and content registered!\n")
 
     # Step 4: Run A/B test
-    print("🏃‍♂️ Running A/B test...")
+    print("Running A/B test...")
     hybrid_rewards = []
     disjoint_rewards = []
     start_time = time.time()
@@ -80,10 +80,10 @@ def main():
         disjoint_rewards.append(reward)
 
     end_time = time.time()
-    print(f"✅ A/B test complete! Took {end_time - start_time:.2f} seconds!\n")
+    print(f"A/B test complete! Took {end_time - start_time:.2f} seconds!\n")
 
     # Step 5: Calculate and print results
-    print("📈 A/B TEST RESULTS:")
+    print("A/B TEST RESULTS:")
     print("-" * 80)
     print(f"{'Metric':<25} | {'Hybrid':<15} | {'Disjoint':<15}")
     print("-" * 80)
@@ -99,15 +99,15 @@ def main():
     print("-" * 80)
 
     if hybrid_avg > disjoint_avg:
-        print("\n🎉 WINNER: Hybrid Model!")
+        print("\nWINNER: Hybrid Model!")
         improvement = ((hybrid_avg - disjoint_avg) / disjoint_avg) * 100
         print(f"   Performs {improvement:.1f}% better than Disjoint!")
     elif disjoint_avg > hybrid_avg:
-        print("\n🎉 WINNER: Disjoint Model!")
+        print("\nWINNER: Disjoint Model!")
         improvement = ((disjoint_avg - hybrid_avg) / hybrid_avg) * 100
         print(f"   Performs {improvement:.1f}% better than Hybrid!")
     else:
-        print("\n🤝 TIE: Both models perform equally!")
+        print("\nTIE: Both models perform equally!")
 
     print()
     print("=" * 80)

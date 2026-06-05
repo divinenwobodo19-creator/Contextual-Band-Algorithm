@@ -6,7 +6,7 @@
 # ==============================================================================
 
 echo "========================================"
-echo "  🚀 PUSHING TO GITHUB AUTOMATICALLY!"
+echo "   PUSHING TO GITHUB AUTOMATICALLY!"
 echo "========================================"
 echo ""
 
@@ -15,10 +15,10 @@ cd "$(dirname "$0")"
 
 # Check if git is installed
 if ! command -v git &> /dev/null; then
-    echo "❌ Git is not installed! Please install git first!"
+    echo "Git is not installed! Please install git first!"
     exit 1
 fi
-echo "✅ Git is installed"
+echo "Git is installed"
 
 # Initialize git repo if not already initialized
 if [ ! -d ".git" ]; then
@@ -47,6 +47,6 @@ git push -u origin main || git push -u origin master
 
 echo ""
 echo "========================================"
-echo "  ✅ PUSH COMPLETED SUCCESSFULLY!"
+echo "   PUSH COMPLETED SUCCESSFULLY!"
 echo "========================================"
 echo "Check your repo at https://github.com/divinenwobodo19-creator/Contextual-Band-Algorithm"
