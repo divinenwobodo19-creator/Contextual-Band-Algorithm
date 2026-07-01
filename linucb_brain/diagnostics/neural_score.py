@@ -79,10 +79,6 @@ def run_neural_diagnostics(
         sensitivity_samples = []
         student_ids = list(students.keys())
         
-        print("\n" + "="*80)
-        print("  DEBUG: CONTEXT SENSITIVITY - AGENT COMPARISON")
-        print("="*80)
-        
         # Sample 3 agents for comparison as requested
         sample_ids = random.sample(student_ids, min(3, len(student_ids)))
         if len(sample_ids) >= 2:
@@ -100,23 +96,21 @@ def run_neural_diagnostics(
                 rec = brain_instance.recommend(sid, top_n=1)
                 agent_data.append({'id': sid, 'ctx': ctx, 'rec': rec.content_id})
             
-            # Print side by side comparison
-            for i in range(len(agent_data)):
-                a = agent_data[i]
-                print(f"Agent {i+1} (ID: {a['id']}):")
-                print(f"  Context: {np.array2string(a['ctx'], precision=3, separator=', ')}")
-                print(f"  Recommended Arm: {a['rec']}")
+            # Commented out debug prints
+            # for i in range(len(agent_data)):
+            #     a = agent_data[i]
+            #     print(f"Agent {i+1} (ID: {a['id']}):")
+            #     print(f"  Context: {np.array2string(a['ctx'], precision=3, separator=', ')}")
+            #     print(f"  Recommended Arm: {a['rec']}")
             
-            # Print pair distances
-            for i in range(len(agent_data)):
-                for j in range(i+1, len(agent_data)):
-                    a, b = agent_data[i], agent_data[j]
-                    dist = cosine(a['ctx'], b['ctx'])
-                    diff = 1.0 if a['rec'] != b['rec'] else 0.0
-                    print(f"Distance ({a['id']} vs {b['id']}): {dist:.6f} | Rec Diff: {diff}")
+            # for i in range(len(agent_data)):
+            #     for j in range(i+1, len(agent_data)):
+            #         a, b = agent_data[i], agent_data[j]
+            #         dist = cosine(a['ctx'], b['ctx'])
+            #         diff = 1.0 if a['rec'] != b['rec'] else 0.0
+            #         print(f"Distance ({a['id']} vs {b['id']}): {dist:.6f} | Rec Diff: {diff}")
             
             brain_instance.alpha = orig_alpha
-        print("="*80 + "\n")
         
         # Now run standard sensitivity sampling for the score
         for _ in range(min(20, len(students) * (len(students) - 1) // 2)):

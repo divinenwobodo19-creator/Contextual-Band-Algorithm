@@ -254,8 +254,8 @@ class Brain:
         if self.model_type == "disjoint" or self.model_type == "ts":
             context = build_context(student, content)
             # Update model
-            if self.update_count < 10:
-                print(f"[DEBUG REWARD] Session {self.update_count+1}: Student={s_id}, Content={c_id}, Reward={reward:.4f}")
+            # if self.update_count < 10:
+            #     print(f"[DEBUG REWARD] Session {self.update_count+1}: Student={s_id}, Content={c_id}, Reward={reward:.4f}")
             self.model.update(c_id, context, reward)
             context_vector = context.tolist()
         elif self.model_type == "hybrid":
