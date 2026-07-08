@@ -17,8 +17,8 @@ def main():
     agents_df = pd.read_csv("data/oulad/agents_clean.csv")
     arms_df = pd.read_csv("data/oulad/arms_clean.csv")
 
-    # Use a slice of 500 interactions (super fast!)
-    test_slice = interactions_df.head(500)
+    # Use a bigger slice of 100,000 interactions (still fast!)
+    test_slice = interactions_df.head(100000)
     print(f"Loaded {len(test_slice):,} test interactions!\n")
 
     # Step 2: Initialize both models with auto_diagnose_every set to a huge number
@@ -70,6 +70,7 @@ def main():
     disjoint_recommendation_count = 0
     start_time = time.time()
 
+    evaluate_every = 100  # Only evaluate every 100th interaction to make it FAST!
     for idx, row in enumerate(tqdm(test_slice.itertuples(), total=len(test_slice), desc="Processing Interactions")):
         student_id = str(row.agent_id)
         actual_arm_id = str(row.arm_id)
@@ -79,17 +80,18 @@ def main():
         hybrid_brain.update(student_id, actual_arm_id, actual_reward)
         disjoint_brain.update(student_id, actual_arm_id, actual_reward)
 
-        # Now evaluate for the group
-        if student_id in hybrid_group:
-            rec = hybrid_brain.recommend(student_id)
-            # Always count this reward to get a sample!
-            hybrid_rewards.append(actual_reward)
-            hybrid_recommendation_count += 1
-        elif student_id in disjoint_group:
-            rec = disjoint_brain.recommend(student_id)
-            # Always count this reward to get a sample!
-            disjoint_rewards.append(actual_reward)
-            disjoint_recommendation_count += 1
+        # Now evaluate for the group only every N interactions!
+        if idx % evaluate_every == 0:
+            if student_id in hybrid_group:
+                rec = hybrid_brain.recommend(student_id)
+                # Always count this reward to get a sample!
+                hybrid_rewards.append(actual_reward)
+                hybrid_recommendation_count += 1
+            elif student_id in disjoint_group:
+                rec = disjoint_brain.recommend(student_id)
+                # Always count this reward to get a sample!
+                disjoint_rewards.append(actual_reward)
+                disjoint_recommendation_count += 1
 
     end_time = time.time()
     print(f"A/B test complete! Took {end_time - start_time:.2f} seconds!\n")
