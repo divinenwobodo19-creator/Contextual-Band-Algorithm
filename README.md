@@ -61,6 +61,33 @@ curl -X POST http://localhost:8000/recommend \
 - Exploration Efficiency: 9.4/10
 - Average Reward: 0.70-0.90 for content recommendations
 - Context Sensitivity Improvements: Boosted feature scaling by 5-10x!
+- A/B Test Winner: Hybrid Model, 1.4% better than Disjoint!
+
+## Model Parameters
+The `Brain` class has several configurable parameters to tune performance:
+
+### Core Parameters
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `alpha` | float | 1.0 | Exploration-exploitation tradeoff. Higher values → more exploration. |
+| `alpha_decay` | float | 0.999 | Multiplicative decay for alpha over time. |
+| `model_type` | str | "disjoint" | Algorithm to use: "disjoint", "hybrid", or "ts". Use `algorithm` as an alias. |
+| `algorithm` | str | None | Alias for `model_type`. |
+| `gamma` | float | 1.0 | Discount factor for LinUCB updates. |
+| `n_clusters` | int | 5 | Number of student clusters for COBART hybrid model. |
+| `auto_diagnose_every` | int | 50 | Frequency of automatic neural score diagnostics (in thousands of interactions). |
+| `track_sessions` | bool | True | Whether to store session history in memory. |
+| `max_sessions` | int | 100000 | Maximum number of sessions to keep in memory (prevents memory issues). |
+
+### Multi-Objective Reward Weights
+You can tune `brain.reward_weights` to prioritize different goals:
+```python
+brain.reward_weights = {
+    'improvement': 0.5,   # Priority on score improvement
+    'completion': 0.3,    # Priority on content completion
+    'engagement': 0.2     # Priority on student engagement
+}
+```
 
 ## Docker Support
 ```bash
