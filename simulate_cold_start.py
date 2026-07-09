@@ -16,11 +16,11 @@ def run_cold_start_simulation():
     
     checkpoints.sort(key=os.path.getmtime, reverse=True)
     latest_brain_path = checkpoints[0]
-    print(f"🧠 Loading trained brain from: {latest_brain_path}")
+    print(f" Loading trained brain from: {latest_brain_path}")
     brain = Brain.load(latest_brain_path)
     
     # 2. Load data to find "unseen" or "test" students
-    print("📂 Loading data...")
+    print("Loading data...")
     agents_df = pd.read_csv("data/oulad/agents_clean.csv")
     interactions_df = pd.read_csv("data/oulad/interactions_clean.csv")
     
@@ -31,7 +31,7 @@ def run_cold_start_simulation():
     
     results = []
     
-    print(f"🧪 Simulating cold-start for {len(test_students)} students...")
+    print(f"Simulating cold-start for {len(test_students)} students...")
     
     for _, student_row in test_students.iterrows():
         student_id = str(int(student_row['agent_id']))

@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException, Depends
 from typing import List, Dict, Optional
 import os
+import numpy as np
 
 from ..brain import Brain
 from ..core.reward import calculate_reward
@@ -22,21 +23,62 @@ import glob
 BRAIN_STATE_PATH = os.getenv("BRAIN_STATE_PATH", "oulad_brain_state.json")
 
 def get_brain():
-    # Check for full brain state first
     if os.path.exists(BRAIN_STATE_PATH):
-        return Brain.load(BRAIN_STATE_PATH)
-    
-    # Otherwise check for checkpoints (just like dashboard)
+        try:
+            print(f"Loading Brain from: {BRAIN_STATE_PATH}")
+            return Brain.load(BRAIN_STATE_PATH)
+        except Exception as e:
+            print(f"  Warning: Could not load {BRAIN_STATE_PATH}: {e}")
+            print(f"  Falling through to checkpoint or demo mode.")
+
     checkpoints = glob.glob("oulad_checkpoint_*.json")
     if checkpoints:
-        # Sort by modification time (most recent first)
         checkpoints.sort(key=os.path.getmtime, reverse=True)
-        latest = checkpoints[0]
-        print(f"Loading Brain from checkpoint: {latest}")
-        return Brain.load(latest)
-        
-    print("Initializing new Hybrid Brain (No state found)")
-    return Brain(model_type="hybrid")
+        for cp in checkpoints:
+            try:
+                print(f"Loading Brain from checkpoint: {cp}")
+                return Brain.load(cp)
+            except Exception as e:
+                print(f"  Warning: Could not load {cp}: {e}")
+                continue
+
+    print("Initializing demo Brain with sample students and content...")
+    brain = Brain(model_type="hybrid")
+    _seed_demo_data(brain)
+    return brain
+
+
+def _seed_demo_data(brain: Brain):
+    """Seed the brain with demo students and content so the API works immediately."""
+    students = [
+        ("608041", "Alice", 0.72, "Math"),
+        ("573152", "Bob", 0.45, "Science"),
+        ("291018", "Charlie", 0.88, "History"),
+        ("834729", "Diana", 0.61, "Math"),
+        ("115503", "Eve", 0.93, "Science"),
+    ]
+    for sid, name, perf, topic in students:
+        brain.add_student(sid, name, performance_score=perf, current_topic=topic)
+
+    content_items = [
+        ("C001", "Algebra Fundamentals", "Math", 2, "video"),
+        ("C002", "Advanced Calculus", "Math", 5, "quiz"),
+        ("C003", "Cell Biology", "Science", 3, "reading"),
+        ("C004", "Quantum Physics", "Science", 5, "video"),
+        ("C005", "World War II Overview", "History", 2, "reading"),
+        ("C006", "Ancient Civilizations", "History", 4, "quiz"),
+        ("C007", "Grammar Essentials", "English", 1, "video"),
+        ("C008", "Creative Writing", "English", 3, "exercise"),
+    ]
+    for cid, title, topic, diff, ctype in content_items:
+        brain.add_content(cid, title, topic, diff, ctype)
+
+    for sid, _, _, _ in students:
+        for _ in range(3):
+            rec = brain.recommend(sid, top_n=1)
+            brain.update(sid, rec.content_id, 0.5 + 0.5 * np.random.random())
+
+    print(f"  → {len(brain.students)} students, {len(brain.contents)} content items, {len(brain.sessions)} sessions")
 
 brain_instance = get_brain()
 
