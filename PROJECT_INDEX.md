@@ -34,10 +34,17 @@ This file serves as a central hub for your project when opened as an **Obsidian 
 - [[tests/test_linucb.py]]
 - [[tests/test_neural_score.py]]
 - [[tests/test_personalizer.py]]
+- [[tests/test_integration.py]] - Full Brain pipeline integration test
+- [[tests/test_api.py]] - REST API integration tests
 
 ## Execution & Simulation
 - [[oulad_brain_run.py]] - Main OULAD dataset simulation
 - [[oulad_preprocessor.py]] - Data cleaning pipeline
 - [[dashboard.py]] - Real-time monitoring dashboard
+- [[demo_investor.py]] - Guided investor presentation demo
+
+## Documentation & Checklists
+- [[README.md]] - Quick start and project overview
+- [[INVESTOR_CHECKLIST.md]] - Step-by-step investor demo checklist
 
 ---
