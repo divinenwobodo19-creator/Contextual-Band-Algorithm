@@ -295,7 +295,6 @@ class Brain:
                     self.sessions = self.sessions[-self.max_sessions:]
 
             student.session_count += 1
-            student.performance_score = (student.performance_score * (student.session_count - 1) + reward) / student.session_count
 
             content.times_rewarded += 1
             content.times_recommended = max(content.times_recommended, content.times_rewarded)
