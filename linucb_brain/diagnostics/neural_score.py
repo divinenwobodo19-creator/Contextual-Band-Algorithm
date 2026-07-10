@@ -1,7 +1,7 @@
 import numpy as np
 import random
-from math import log, exp
-from scipy.spatial.distance import cosine
+import itertools
+from math import log
 from typing import Dict, List, Optional
 from ..models.student import Student
 from ..models.content import Content
@@ -76,64 +76,24 @@ def run_neural_diagnostics(
     if len(students) < 2:
         context_score = 5.0
     else:
-        sensitivity_samples = []
         student_ids = list(students.keys())
-        
-        # Sample 3 agents for comparison as requested
-        sample_ids = random.sample(student_ids, min(3, len(student_ids)))
-        if len(sample_ids) >= 2:
-            from ..core.context import build_context
-            content_id = list(contents.keys())[0] if contents else "dummy"
-            dummy_content = contents[content_id] if contents else Content(content_id, "dummy", "dummy", 3, "video")
-            
-            # Use alpha=0.1 to see what's learned, not just noise
-            orig_alpha = brain_instance.alpha
-            brain_instance.alpha = 0.1
-            
-            agent_data = []
-            for sid in sample_ids:
-                ctx = build_context(students[sid], dummy_content)
-                rec = brain_instance.recommend(sid, top_n=1)
-                agent_data.append({'id': sid, 'ctx': ctx, 'rec': rec.content_id})
-            
-            # Commented out debug prints
-            # for i in range(len(agent_data)):
-            #     a = agent_data[i]
-            #     print(f"Agent {i+1} (ID: {a['id']}):")
-            #     print(f"  Context: {np.array2string(a['ctx'], precision=3, separator=', ')}")
-            #     print(f"  Recommended Arm: {a['rec']}")
-            
-            # for i in range(len(agent_data)):
-            #     for j in range(i+1, len(agent_data)):
-            #         a, b = agent_data[i], agent_data[j]
-            #         dist = cosine(a['ctx'], b['ctx'])
-            #         diff = 1.0 if a['rec'] != b['rec'] else 0.0
-            #         print(f"Distance ({a['id']} vs {b['id']}): {dist:.6f} | Rec Diff: {diff}")
-            
-            brain_instance.alpha = orig_alpha
-        
-        # Now run standard sensitivity sampling for the score
-        for _ in range(min(20, len(students) * (len(students) - 1) // 2)):
-            id_a, id_b = random.sample(student_ids, 2)
-            content_id = list(contents.keys())[0] if contents else "dummy"
-            from ..core.context import build_context
-            dummy_content = contents[content_id] if contents else Content(content_id, "dummy", "dummy", 3, "video")
-            
-            context_a = build_context(students[id_a], dummy_content)
-            context_b = build_context(students[id_b], dummy_content)
-            dist = cosine(context_a, context_b)
-            
-            orig_alpha = brain_instance.alpha
-            brain_instance.alpha = 0.1
+        student_pairs = list(itertools.combinations(student_ids, 2))
+
+        orig_alpha = brain_instance.alpha
+        brain_instance.alpha = 0.05
+
+        pair_scores = []
+        for id_a, id_b in student_pairs:
+            same_topic = 1.0 if students[id_a].current_topic == students[id_b].current_topic else 0.0
+
             rec_a = brain_instance.recommend(id_a, top_n=1)
             rec_b = brain_instance.recommend(id_b, top_n=1)
-            brain_instance.alpha = orig_alpha
-            
-            diff = 1.0 if rec_a.content_id != rec_b.content_id else 0.0
-            denominator = 1 + exp(-10 * (dist - 0.3))
-            sensitivity_samples.append(diff / denominator)
-            
-        context_score = np.mean(sensitivity_samples) * 10.0 if sensitivity_samples else 0.0
+            same_rec_topic = 1.0 if rec_a.topic == rec_b.topic else 0.0
+
+            pair_scores.append(1.0 - abs(same_rec_topic - same_topic))
+
+        brain_instance.alpha = orig_alpha
+        context_score = np.mean(pair_scores) * 10.0 if pair_scores else 0.0
     scores['context_score'] = min(max(context_score, 0.0), 10.0)
 
     # 4. RECOMMENDATION PRECISION (precision_score)
