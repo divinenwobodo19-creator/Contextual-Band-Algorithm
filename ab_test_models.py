@@ -75,7 +75,8 @@ def main():
         student_id = str(row.agent_id)
         actual_arm_id = str(row.arm_id)
         actual_reward = float(row.reward)
-
+# This is a commentary on your program!!
+        # print('I got to this line')
         # First update both models with the actual interaction
         hybrid_brain.update(student_id, actual_arm_id, actual_reward)
         disjoint_brain.update(student_id, actual_arm_id, actual_reward)

@@ -206,11 +206,10 @@ def main():
     # ------------------------------------------------------------------ #
     section("8. PERSISTENCE — SAVE & LOAD")
 
-    save_path = "/tmp/demo_brain_state.json"
-    brain.save(save_path)
-    loaded = Brain.load(save_path)
+    brain.save("brain_state.json")
+    loaded = Brain.load("brain_state.json")
     assert loaded.summary()["student_count"] == brain.summary()["student_count"]
-    print(f"  ✓ Saved to {save_path}")
+    print(f"  ✓ Saved to brain_state.json")
     print(f"  ✓ Loaded back: {len(loaded.students)} students, {len(loaded.contents)} items, {len(loaded.sessions)} sessions")
     print(f"  ✓ State integrity verified")
 

@@ -1,83 +1,77 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-# import plotly.express as px  # Bypassing plotly due to environment issues
-# import plotly.graph_objects as go
 import json
 import os
 import glob
-import time
 from datetime import datetime
+import re
 
-# Set page config
 st.set_page_config(
-    page_title="LinUCB Brain - Real-time Dashboard",
+    page_title="LinUCB Brain - Dashboard",
     page_icon="🧠",
     layout="wide"
 )
 
-# Title
-st.title("🧠 LinUCB Brain: OULAD Live Simulation")
+st.title("🧠 LinUCB Brain: Live Dashboard")
 st.markdown("---")
 
-# Sidebar for controls
-st.sidebar.header("Simulation Controls")
-refresh_rate = st.sidebar.slider("Refresh Rate (seconds)", 5, 60, 10)
-auto_refresh = st.sidebar.checkbox("Auto-refresh", value=True)
+st.sidebar.header("Controls")
+data_source = st.sidebar.radio("Data Source", ["Auto-detect", "Demo (brain_state.json)", "OULAD Checkpoints"])
+refresh = st.sidebar.button("🔄 Refresh Now")
+if refresh:
+    st.rerun()
 
-import re
 
 def get_checkpoint_index(filename):
     try:
         match = re.search(r'checkpoint_(\d+)k', filename)
-        if match:
-            return int(match.group(1))
-        return 0
-    except Exception:
+        return int(match.group(1)) if match else 0
+    except:
         return 0
 
-# Helper to load the latest checkpoint or brain state
-def get_latest_state():
-    # Get all potential state files
+
+def load_brain_state():
+    """Load live Brain object from brain_state.json (saved by demo)."""
+    try:
+        from linucb_brain import Brain
+        brain = Brain.load("brain_state.json")
+        return brain
+    except Exception as e:
+        return None
+
+
+def get_oulad_checkpoints():
     files = glob.glob("oulad_checkpoint_*.json")
     if os.path.exists("oulad_brain_state.json"):
         files.append("oulad_brain_state.json")
-    
     if not files:
         return None, None
-        
-    # Sort by modification time (most recent first)
     files.sort(key=os.path.getmtime, reverse=True)
-    latest_file = files[0]
-    
+    latest = files[0]
     try:
-        with open(latest_file, "r") as f:
+        with open(latest) as f:
             state = json.load(f)
-            
-        if latest_file == "oulad_brain_state.json":
+        if latest == "oulad_brain_state.json":
             label = "Final State"
         else:
-            # Extract k number from oulad_checkpoint_100k.json or emergency files
-            idx = get_checkpoint_index(latest_file)
-            is_emergency = "emergency" in latest_file
+            idx = get_checkpoint_index(latest)
+            is_emergency = "emergency" in latest
             label = f"Checkpoint {idx}k" + (" (Emergency)" if is_emergency else "")
-            
         return state, label
-    except Exception as e:
-        st.error(f"Error loading {latest_file}: {str(e)}")
+    except:
         return None, None
 
-# Helper to load all checkpoints for trend analysis
-def get_all_checkpoint_metrics():
+
+def get_checkpoint_trend():
     checkpoints = glob.glob("oulad_checkpoint_*.json")
     if not checkpoints:
         return pd.DataFrame()
-    
     all_data = []
     for f in checkpoints:
         try:
-            with open(f, "r") as json_file:
-                d = json.load(json_file)
+            with open(f) as jf:
+                d = json.load(jf)
                 score = d.get('last_neural_score', {})
                 if score:
                     all_data.append({
@@ -88,84 +82,141 @@ def get_all_checkpoint_metrics():
                     })
         except:
             continue
-            
     df = pd.DataFrame(all_data)
-    if not df.empty:
-        df = df.sort_values('sessions')
-    return df
+    return df.sort_values('sessions') if not df.empty else df
 
-state, source = get_latest_state()
 
-if state:
-    # 1. Top Metrics Row
+# ---------- LOAD DATA ----------
+brain = None
+oulad_state = None
+oulad_label = None
+
+if data_source == "Auto-detect":
+    brain = load_brain_state()
+    if brain is None:
+        oulad_state, oulad_label = get_oulad_checkpoints()
+elif data_source == "Demo (brain_state.json)":
+    brain = load_brain_state()
+elif data_source == "OULAD Checkpoints":
+    oulad_state, oulad_label = get_oulad_checkpoints()
+
+
+# ---------- RENDER ----------
+if brain is not None:
+    summary = brain.summary()
+    scores = brain.neural_score(verbose=False)
+
     m1, m2, m3, m4 = st.columns(4)
-    
     with m1:
-        st.metric("Source", source)
+        st.metric("Source", "Demo (brain_state.json)")
     with m2:
-        st.metric("Total Students", f"{state.get('student_count', 0):,}")
+        st.metric("Students", f"{summary['student_count']}")
     with m3:
-        st.metric("Total Arms", f"{state.get('content_count', 0):,}")
+        st.metric("Content Items", f"{summary['content_count']}")
     with m4:
-        st.metric("Sessions Processed", f"{state.get('total_sessions', 0):,}")
+        st.metric("Sessions", f"{summary['total_sessions']:,}")
 
-    # 2. Neural Score Display
-    st.subheader("Latest Neural Score")
-    
-    last_score = state.get('last_neural_score')
+    st.subheader("Neural Score")
+    s1, s2 = st.columns([1, 2])
+
+    with s1:
+        ns = scores.get('neural_score', 0)
+        st.metric("Neural Score", f"{ns:.2f}/10.0")
+
+        dims = {
+            'Exploration': scores.get('exploration_score', 0),
+            'Convergence': scores.get('convergence_score', 0),
+            'Context': scores.get('context_score', 0),
+            'Precision': scores.get('precision_score', 0),
+            'Grade': scores.get('grade_score', 0),
+            'Purity': scores.get('purity_score', 5.0),
+            'Balance': scores.get('balance_score', 7.5),
+        }
+        df_dim = pd.DataFrame({'Dimension': list(dims.keys()), 'Score': list(dims.values())})
+        st.bar_chart(df_dim.set_index('Dimension'))
+
+    with s2:
+        st.write("**Recommendation Log (last 10)**")
+        sessions = brain.sessions[-10:] if brain.sessions else []
+        if sessions:
+            rows = []
+            for s in sessions:
+                sid = s.student_id
+                student = brain.students.get(sid)
+                topic = getattr(student, 'current_topic', '?') if student else '?'
+                rows.append({
+                    'Student': sid,
+                    'Topic': topic,
+                    'Content': s.content_id,
+                    'Reward': f"{s.reward:.3f}" if s.reward is not None else "-",
+                })
+            st.dataframe(pd.DataFrame(rows), use_container_width=True)
+        else:
+            st.info("No sessions recorded yet.")
+
+    st.markdown("---")
+    p1, p2, p3 = st.columns(3)
+    with p1:
+        st.write(f"**Model:** `{summary['model_type']}`")
+    with p2:
+        st.write(f"**Alpha:** `{summary['alpha']:.4f}`")
+    with p3:
+        st.write(f"**Students:** `{summary['student_count']}` / **Content:** `{summary['content_count']}`")
+
+elif oulad_state is not None:
+    m1, m2, m3, m4 = st.columns(4)
+    with m1:
+        st.metric("Source", oulad_label)
+    with m2:
+        st.metric("Students", f"{oulad_state.get('student_count', 0):,}")
+    with m3:
+        st.metric("Arms", f"{oulad_state.get('content_count', 0):,}")
+    with m4:
+        st.metric("Sessions", f"{oulad_state.get('total_sessions', 0):,}")
+
+    st.subheader("Neural Score")
+    last_score = oulad_state.get('last_neural_score')
     if last_score:
         s1, s2 = st.columns([1, 2])
-        
         with s1:
-            # Display overall score clearly
             st.metric("Neural Score", f"{last_score.get('neural_score', 0):.2f}/10.0")
-            
-            # Dimension breakdown
-            dimensions = {
+            dims = {
                 'Exploration': last_score.get('exploration_score', 0),
                 'Convergence': last_score.get('convergence_score', 0),
                 'Sensitivity': last_score.get('context_score', 0),
                 'Precision': last_score.get('precision_score', 0),
-                'Grade Pred.': last_score.get('grade_score', 0),
-                'Cohort Purity': last_score.get('purity_score', 5.0),
-                'Obj. Balance': last_score.get('balance_score', 7.5)
+                'Grade': last_score.get('grade_score', 0),
+                'Purity': last_score.get('purity_score', 5.0),
+                'Balance': last_score.get('balance_score', 7.5),
             }
-            df_dim = pd.DataFrame({'Dimension': list(dimensions.keys()), 'Score': list(dimensions.values())})
+            df_dim = pd.DataFrame({'Dimension': list(dims.keys()), 'Score': list(dims.values())})
             st.bar_chart(df_dim.set_index('Dimension'))
-            
         with s2:
-            # 2.5 Trend Analysis (New)
             st.write("**Performance Trend**")
-            df_trend = get_all_checkpoint_metrics()
+            df_trend = get_checkpoint_trend()
             if not df_trend.empty:
                 st.line_chart(df_trend.set_index('sessions')[['neural_score', 'exploration', 'sensitivity']])
             else:
-                st.info("Trend data will appear after multiple checkpoints are saved.")
+                st.info("Trend data appears after multiple checkpoints.")
 
-    # 3. Model Parameters
     st.markdown("---")
     p1, p2, p3 = st.columns(3)
     with p1:
-        st.write(f"**Model Type:** `{state.get('model_type', 'N/A')}`")
+        st.write(f"**Model:** `{oulad_state.get('model_type', 'N/A')}`")
     with p2:
-        st.write(f"**Alpha (Exploration):** `{state.get('current_alpha', 0):.4f}`")
+        st.write(f"**Alpha:** `{oulad_state.get('current_alpha', 0):.4f}`")
     with p3:
-        st.write(f"**Gamma (Discounting):** `{state.get('current_gamma', 0):.4f}`")
+        st.write(f"**Gamma:** `{oulad_state.get('current_gamma', 0):.4f}`")
 
-    # 4. Progress Placeholder (If running)
-    if source != "Final State":
-        progress = state.get('total_sessions', 0) / 10655280
-        st.progress(min(progress, 1.0), text=f"Simulation Progress: {progress*100:.1f}%")
-        st.info("The simulation is currently running. Refresh to see updated scores.")
+    if oulad_label != "Final State":
+        progress = oulad_state.get('total_sessions', 0) / 10655280
+        st.progress(min(progress, 1.0), f"Progress: {progress*100:.1f}%")
     else:
-        st.success("Simulation Complete! All 10.6M interactions processed.")
+        st.success("OULAD simulation complete! All 10.6M interactions.")
 
 else:
-    st.warning("No brain state or checkpoints found. Start the simulation first!")
-    if st.button("Check Again"):
-        st.rerun()
+    st.warning("No data found. Run the demo first:")
+    st.code("cd /path/to/project && PYTHONPATH=. python3 demo_investor.py", language="bash")
+    st.code("PYTHONPATH=. streamlit run dashboard.py", language="bash")
 
-# Auto-refresh logic
-if auto_refresh:
-    time.sleep(refresh_rate)
-    st.rerun()
+
