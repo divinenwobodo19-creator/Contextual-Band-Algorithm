@@ -1,6 +1,7 @@
 import numpy as np
 import uuid
 import threading
+from datetime import datetime
 from typing import Dict, List, Optional, Union
 from .models.student import Student
 from .models.content import Content
@@ -13,6 +14,7 @@ from .core.clustering import ClusteringEngine
 from .diagnostics.neural_score import run_neural_diagnostics
 from .diagnostics.report import render_neural_report
 from .storage import save_brain, load_brain
+from .utils import clip
 
 class Brain:
     """
@@ -296,6 +298,10 @@ class Brain:
 
             student.session_count += 1
 
+            if content.topic not in student.grade_history:
+                student.grade_history[content.topic] = []
+            student.grade_history[content.topic].append(reward)
+
             content.times_rewarded += 1
             content.times_recommended = max(content.times_recommended, content.times_rewarded)
             n_r = content.times_rewarded
@@ -311,8 +317,10 @@ class Brain:
 
     def predict_grade(self, student_id: str, subject: str) -> float:
         """
-        Predict a grade for a student in a subject.
-        Uses the current performance score as a baseline for the grade.
+        Predict a student's grade in a subject based on their past scores.
+
+        Returns the average of all recorded scores for that subject.
+        Falls back to the student's overall performance score if no history exists.
         """
         with self._lock:
             if student_id not in self.students:
@@ -320,20 +328,11 @@ class Brain:
 
             student = self.students[student_id]
 
-            student_sessions = [s for s in self.sessions if s.student_id == student_id and s.topic == subject]
-
-            initial_grade = 0.5
             if subject in student.grade_history and student.grade_history[subject]:
-                initial_grade = student.grade_history[subject][0]
+                grades = student.grade_history[subject]
+                return clip(sum(grades) / len(grades), 0.0, 1.0)
 
-            if not student_sessions:
-                return initial_grade
-
-            total_improvement = sum(s.reward for s in student_sessions if s.reward is not None)
-            predicted = initial_grade + total_improvement
-
-            from .utils import clip
-            return clip(predicted, 0.0, 1.0)
+            return clip(student.performance_score, 0.0, 1.0)
 
     def neural_score(self, verbose: bool = True) -> dict:
         """Manually trigger full diagnostics."""
@@ -345,6 +344,33 @@ class Brain:
                 print(render_neural_report(scores))
 
             return scores
+
+    def export_teacher_data(self) -> dict:
+        """Export student/subject data for the offline teacher HTML tool."""
+        with self._lock:
+            students_data = []
+            for sid, student in self.students.items():
+                students_data.append({
+                    "id": sid,
+                    "name": student.name,
+                    "performance": round(student.performance_score, 3),
+                    "topic": student.current_topic,
+                    "grade_history": {
+                        subj: [round(g, 3) for g in grades]
+                        for subj, grades in student.grade_history.items()
+                    },
+                })
+            subjects = sorted(set(
+                c.topic for c in self.contents.values()
+            ).union(
+                subj for s in self.students.values()
+                for subj in s.grade_history.keys()
+            ))
+            return {
+                "students": students_data,
+                "subjects": subjects,
+                "generated": str(datetime.now()),
+            }
 
     def save(self, filepath: str) -> None:
         """Save brain state to file."""
@@ -358,17 +384,116 @@ class Brain:
         """Load brain state from file."""
         return load_brain(filepath, cls)
 
-    def update_batch(self, updates: List[Dict]) -> None:
+    def bulk_update(self, entries: List[Dict]) -> Dict:
         """
-        Perform batch updates for production scalability.
+        Submit scores for a whole class at once (teacher workflow).
         
-        Args:
-            updates: List of dicts with student_id, content_id, reward.
+        Each entry::
+            {"student_id": "S01", "content_id": "M01", "reward": 0.85}
+            or simply:
+            {"student_id": "S01", "subject": "Math", "score": 0.85}
+            (content_id is auto-assigned from subject if omitted)
+        
+        Returns a summary dict with counts and average reward.
         """
-        for up in updates:
-            self.update(up['student_id'], up['content_id'], up['reward'])
+        with self._lock:
+            rewards = []
+            for entry in entries:
+                sid = entry.get("student_id") or entry.get("agent_id")
+                cid = entry.get("content_id") or entry.get("arm_id")
+                reward = entry.get("reward") or entry.get("score", 0.0)
 
-    def tune_parameters(self) -> Dict[str, float]:
+                if not sid:
+                    continue
+
+                if not cid:
+                    subject = entry.get("subject", "_general")
+                    cid = self._get_or_create_topic_content(subject)
+
+                if cid not in self.contents:
+                    continue
+
+                self.update(sid, cid, reward)
+                rewards.append(reward)
+
+            avg = float(np.mean(rewards)) if rewards else 0.0
+            return {
+                "processed": len(rewards),
+                "avg_reward": round(avg, 4),
+            }
+
+    def _get_or_create_topic_content(self, topic: str) -> str:
+        """Find or create a generic content item for a topic (teacher mode)."""
+        cid = f"_topic_{topic}"
+        if cid not in self.contents:
+            self.add_content(cid, f"{topic} Practice", topic, 3, "exercise")
+        return cid
+
+    def triage(self, subject: str, n_tiers: int = 3) -> Dict:
+        """
+        Group students by predicted performance in a subject using absolute thresholds.
+
+        Thresholds follow the Nigerian WAEC grading scale (0–1):
+          - remediation (Needs Extra Help):  predicted < 0.4   (F9 — Fail)
+          - on_track (At Expected Level):     0.4 <= predicted < 0.75  (E8 to B2)
+          - ahead (Ahead of Class):           predicted >= 0.75 (A1 — Excellent)
+
+        Each tier includes student info and a recommended difficulty.
+        """
+        with self._lock:
+            results = []
+            for sid, student in self.students.items():
+                pred = self.predict_grade(sid, subject)
+                topics_seen = subject in student.grade_history
+                n_attempts = len(student.grade_history.get(subject, []))
+                results.append({
+                    "student_id": sid,
+                    "name": student.name,
+                    "predicted": pred,
+                    "topics_seen": topics_seen,
+                    "attempts": n_attempts,
+                })
+
+            if not results:
+                return {"subject": subject, "tiers": {}, "total": 0}
+
+            tiers = {1: [], 2: [], 3: []}
+            tier_labels = {1: "remediation", 2: "on_track", 3: "ahead"}
+            tier_diff = {1: 1, 2: 3, 3: 5}
+            tier_desc = {
+                1: "Scored below 40% (F9). Needs extra practice — give foundational materials.",
+                2: "Scored 40–74% (E8 to B2). On track — continue with standard curriculum.",
+                3: "Scored 75% or above (A1). Ahead of class — give advanced materials.",
+            }
+
+            for r in results:
+                p = r["predicted"]
+                if p < 0.4:
+                    t = 1
+                elif p < 0.75:
+                    t = 2
+                else:
+                    t = 3
+                tiers[t].append({
+                    "student_id": r["student_id"],
+                    "name": r["name"],
+                    "predicted_score": round(p, 2),
+                    "attempts": r["attempts"],
+                })
+
+            return {
+                "subject": subject,
+                "total_students": len(results),
+                "tiers": {
+                    tier_labels[k]: {
+                        "students": v,
+                        "count": len(v),
+                        "recommended_difficulty": tier_diff[k],
+                        "note": tier_desc[k],
+                    }
+                    for k, v in tiers.items()
+                },
+            }
         """
         Meta-Learner: Automatically adjust alpha and gamma based on neural score.
         """
