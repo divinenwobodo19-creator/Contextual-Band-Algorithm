@@ -48,7 +48,7 @@ def load_class_config() -> dict:
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE) as f:
             return json.load(f)
-    return {"term_subjects": [], "term_name": ""}
+    return {"term_subjects": [], "classes": []}
 
 
 def save_class_config(config: dict) -> None:
@@ -57,13 +57,13 @@ def save_class_config(config: dict) -> None:
 
 
 TIER_LABELS = {
-    "remediation": {"label": "Needs Extra Help", "icon": "🔴",
+    "remediation": {"label": "Needs Extra Help", "icon": "\U0001F534",
         "note": "Scored below 40% (F9). Give them remedial exercises before moving on.",
         "color": "#E74C3C"},
-    "on_track": {"label": "At Expected Level", "icon": "🟡",
-        "note": "Scored 40–74% (E8 to B2). Continue with standard curriculum materials.",
+    "on_track": {"label": "At Expected Level", "icon": "\U0001F7E1",
+        "note": "Scored 40-74% (E8 to B2). Continue with standard curriculum materials.",
         "color": "#F1C40F"},
-    "ahead": {"label": "Ahead of Class", "icon": "🟢",
+    "ahead": {"label": "Ahead of Class", "icon": "\U0001F7E2",
         "note": "Scored 75% or above (A1). Give them advanced or challenge materials.",
         "color": "#27AE60"},
 }
@@ -87,21 +87,103 @@ def get_brain():
 
 brain = get_brain()
 
-# Seed term subjects in session state
+# Seed session state
 if "term_subjects" not in st.session_state:
     st.session_state.term_subjects = class_config.get("term_subjects", [])
+if "selected_class" not in st.session_state:
+    st.session_state.selected_class = ""
+if "available_classes" not in st.session_state:
+    st.session_state.available_classes = class_config.get("classes", [])
 
-# Derived lists
-student_list = sorted(brain.students.values(), key=lambda s: s.name)
-subjects_with_scores = sorted(set(
-    subj for s in brain.students.values()
-    for subj in s.grade_history.keys()
-))
+# ── Derived lists (filtered by selected class) ──────────────────────────────
 
-# ── Layout ───────────────────────────────────────────────────────────────────
+selected_class = st.session_state.selected_class
+
+def get_class_students():
+    all_students = sorted(brain.students.values(), key=lambda s: s.name)
+    if selected_class:
+        return [s for s in all_students if s.class_id == selected_class]
+    return all_students
+
+
+def get_class_subjects():
+    students = get_class_students()
+    return sorted(set(
+        subj for s in students
+        for subj in s.grade_history.keys()
+    ))
+
+# ── Sidebar: Class management ───────────────────────────────────────────────
+
+with st.sidebar:
+    st.header("Class")
+
+    class_options = [""] + st.session_state.available_classes
+    class_labels = {"": "-- All Students --"}
+    for c in st.session_state.available_classes:
+        count = sum(1 for s in brain.students.values() if s.class_id == c)
+        class_labels[c] = f"{c} ({count} students)"
+
+    sel = st.selectbox(
+        "Select class",
+        class_options,
+        format_func=lambda x: class_labels.get(x, x),
+        key="selected_class",
+    )
+
+    with st.expander("Manage Classes"):
+        st.caption("Create a new class or remove existing ones.")
+        new_class = st.text_input("New class name", placeholder="e.g. JSS1A",
+                                   key="new_class_input")
+        if st.button("Create Class"):
+            name = new_class.strip().upper()
+            if name and name not in st.session_state.available_classes:
+                st.session_state.available_classes.append(name)
+                st.session_state.available_classes.sort()
+                save_class_config({
+                    "term_subjects": st.session_state.term_subjects,
+                    "classes": st.session_state.available_classes,
+                })
+                st.rerun()
+
+        if st.session_state.available_classes:
+            st.markdown("**Remove class**")
+            class_to_del = st.selectbox("Select class to remove",
+                                         [""] + st.session_state.available_classes,
+                                         key="del_class_sel")
+            if class_to_del and st.button("Delete Class", type="primary"):
+                st.session_state.available_classes.remove(class_to_del)
+                if st.session_state.selected_class == class_to_del:
+                    st.session_state.selected_class = ""
+                save_class_config({
+                    "term_subjects": st.session_state.term_subjects,
+                    "classes": st.session_state.available_classes,
+                })
+                st.rerun()
+
+        if selected_class:
+            st.markdown(f"**Move students to another class**")
+            students_in_class = [s for s in brain.students.values()
+                                 if s.class_id == selected_class]
+            if students_in_class:
+                target = st.selectbox("Move to",
+                                       [c for c in st.session_state.available_classes
+                                        if c != selected_class],
+                                       key="move_target")
+                if target and st.button("Move All"):
+                    for s in students_in_class:
+                        brain.students[s.student_id].class_id = target
+                    brain.save("brain_state.json")
+                    st.rerun()
+            else:
+                st.caption("No students in this class.")
 
 st.title("Teacher Portal")
-st.markdown("Enter weekly test scores — see which students need extra help and what to give them.")
+st.markdown("Enter weekly test scores -- see which students need extra help and what to give them.")
+
+# Fresh copies filtered by selected class
+student_list = get_class_students()
+subjects_with_scores = get_class_subjects()
 
 tab1, tab2, tab3, tab4 = st.tabs(["Enter Scores", "Class Groups", "Student Progress", "Print Report"])
 
@@ -116,7 +198,7 @@ with tab1:
         subject_counts = {}
         for subj in st.session_state.term_subjects:
             count = 0
-            for student in brain.students.values():
+            for student in get_class_students():
                 g = student.grade_history.get(subj, [])
                 if len(g) > count:
                     count = len(g)
@@ -126,7 +208,7 @@ with tab1:
         chip_cols = st.columns(6)
         for i, subj in enumerate(st.session_state.term_subjects):
             cnt = subject_counts[subj]
-            label = f"{subj} ×{cnt}" if cnt else subj
+            label = f"{subj} x{cnt}" if cnt else subj
             with chip_cols[i % 6]:
                 if st.button(label, key=f"chip_{i}", use_container_width=True):
                     st.session_state["subject_input"] = subj
@@ -141,7 +223,10 @@ with tab1:
                 c1.markdown(f"**{label}**")
                 if c2.button("Delete", key=f"del_subj_{i}", help=f"Remove {subj}"):
                     st.session_state.term_subjects.pop(i)
-                    save_class_config({"term_subjects": st.session_state.term_subjects})
+                    save_class_config({
+                        "term_subjects": st.session_state.term_subjects,
+                        "classes": st.session_state.available_classes,
+                    })
                     st.rerun()
             st.text_input("Add a subject", key="add_subj_input",
                           placeholder="Subject name", label_visibility="collapsed")
@@ -149,19 +234,22 @@ with tab1:
                 new_s = st.session_state.get("add_subj_input", "").strip()
                 if new_s and new_s not in st.session_state.term_subjects:
                     st.session_state.term_subjects.append(new_s)
-                    save_class_config({"term_subjects": st.session_state.term_subjects})
+                    save_class_config({
+                        "term_subjects": st.session_state.term_subjects,
+                        "classes": st.session_state.available_classes,
+                    })
                     st.rerun()
 
-    subject = st.text_input("Subject name (e.g. Algebra - Week 4, Geometry - Week 1)",
+    subject = st.text_input("Subject name (e.g. Basic Science - Week 4, Algebra - Week 1)",
                             placeholder="Type the subject or topic name", key="subject_input")
 
     # ── Score entry table ────────────────────────────────────────────────────
     if not student_list:
-        st.warning("No students yet. Add them in the Student Progress tab or load demo data below.")
+        st.warning("No students in this class. Create a class in the sidebar and add students.")
     elif not subject.strip():
         st.info("Type a subject name above to begin.")
     else:
-        st.subheader(f"Step 2: Enter scores for \"{subject}\" (0–100)")
+        st.subheader(f"Step 2: Enter scores for \"{subject}\" (0-100)")
 
         rows = []
         for student in student_list:
@@ -170,6 +258,7 @@ with tab1:
             rows.append({
                 "Student": student.name,
                 "Score (0-100)": last_score,
+                "Absent": False,
             })
 
         df = pd.DataFrame(rows)
@@ -183,47 +272,76 @@ with tab1:
                     "Score (0-100)", min_value=0, max_value=100, step=1,
                     help="Enter score from 0 to 100",
                 ),
+                "Absent": st.column_config.CheckboxColumn(
+                    "Absent", help="Check if student was absent",
+                ),
             },
             hide_index=True,
             use_container_width=True,
-            key=f"score_editor_{subject}",
+            key=f"score_editor_{subject}_{selected_class}",
         )
 
         # ── Quick preview bar ────────────────────────────────────────────────
-        scores_pct = edited_df["Score (0-100)"].values
-        rem = int((scores_pct < 40).sum())
-        on_track = int(((scores_pct >= 40) & (scores_pct < 75)).sum())
-        ahead = int((scores_pct >= 75).sum())
+        absent_count = int(edited_df["Absent"].sum())
+        present_df = edited_df[~edited_df["Absent"]]
+        total_present = len(present_df)
+        if total_present > 0:
+            scores_pct = present_df["Score (0-100)"].values
+            rem = int((scores_pct < 40).sum())
+            on_tr = int(((scores_pct >= 40) & (scores_pct < 75)).sum())
+            ahead = int((scores_pct >= 75).sum())
+        else:
+            rem = on_tr = ahead = 0
+
+        preview_parts = [
+            f"<b>Preview</b>"
+        ]
+        if total_present:
+            preview_parts.append(
+                f"\U0001F534 Needs Extra Help: {rem}"
+                f"  \U0001F7E1 At Expected Level: {on_tr}"
+                f"  \U0001F7E2 Ahead of Class: {ahead}"
+            )
+        if absent_count:
+            preview_parts.append(f"Absent: {absent_count}")
+
         st.markdown(
             f"<div style='padding:8px 12px;background:#f0f2f6;border-radius:6px;font-size:14px;'>"
-            f"<b>Preview:</b> 🔴 Needs Extra Help: {rem} &nbsp;&nbsp; "
-            f"🟡 At Expected Level: {on_track} &nbsp;&nbsp; "
-            f"🟢 Ahead of Class: {ahead}"
+            f"{' | '.join(preview_parts)}"
             f"</div>",
             unsafe_allow_html=True,
         )
 
-        if st.button("Submit Scores & Update Model", type="primary", use_container_width=True):
+        if st.button("Submit Scores", type="primary", use_container_width=True):
             entries = []
             name_changed = False
             for i, student in enumerate(student_list):
-                new_name = edited_df.iloc[i]["Student"]
+                row = edited_df.iloc[i]
+                if row["Absent"]:
+                    continue
+                new_name = row["Student"]
                 if new_name != student.name:
                     brain.students[student.student_id].name = new_name
                     name_changed = True
-                score = edited_df.iloc[i]["Score (0-100)"]
+                score = row["Score (0-100)"]
                 entries.append({"student_id": student.student_id, "subject": subject, "score": score / 100.0})
 
-            # Auto-add to term subjects on submit
             if subject not in st.session_state.term_subjects:
                 st.session_state.term_subjects.append(subject)
 
             with st.spinner("Saving scores to model..."):
                 result = brain.bulk_update(entries)
                 brain.save("brain_state.json")
-                save_class_config({"term_subjects": st.session_state.term_subjects})
-            st.success(f"Scores saved for {result['processed']} students in \"{subject}\"."
-                       + (" Student names also updated." if name_changed else ""))
+                save_class_config({
+                    "term_subjects": st.session_state.term_subjects,
+                    "classes": st.session_state.available_classes,
+                })
+            parts = [f"Scores saved for {result['processed']} students in \"{subject}\"."]
+            if absent_count:
+                parts.append(f"{absent_count} student(s) marked absent.")
+            if name_changed:
+                parts.append("Student names also updated.")
+            st.success(" ".join(parts))
             st.rerun()
 
     with st.expander("Load demo students (Nigerian names)"):
@@ -249,23 +367,20 @@ with tab1:
             for sid, name, grade, topic in demo_data:
                 brain.add_student(sid, name, performance_score=grade, current_topic=topic)
             brain.save("brain_state.json")
-            st.success("Demo students loaded! Type a subject above and enter their scores.")
+            st.success("Demo students loaded! Select or create a class in the sidebar, then assign students.")
             st.rerun()
 
 # ============================================================================
-# TAB 2 — Class Groups (Nigerian grading scale)
+# TAB 2 — Class Groups
 # ============================================================================
 with tab2:
     st.subheader("Class Groups by Subject")
 
     if not subjects_with_scores:
-        st.info("No scores entered yet. Go to 'Enter Scores' tab first.")
+        st.info("No scores entered yet for this class.")
     else:
         subj = st.selectbox("Select subject to view groups",
-                            subjects_with_scores, key="triage_subject",
-                            on_change=lambda: st.session_state.pop("triage_trigger", None))
-
-        # Auto-run — just reading the selectbox triggers the display below
+                            subjects_with_scores, key="triage_subject")
         result = brain.triage(subj)
         st.metric("Total Students Assessed", result["total_students"])
 
@@ -281,7 +396,7 @@ with tab2:
                 if names:
                     for name, pscore in names:
                         grade = nigerian_grade(pscore)
-                        st.markdown(f"— {name} ({grade})")
+                        st.markdown(f"- {name} ({grade})")
                 else:
                     st.markdown("_No students in this group._")
 
@@ -292,7 +407,7 @@ with tab3:
     st.subheader("Student Progress by Subject")
 
     if not subjects_with_scores:
-        st.info("No scores recorded yet. Go to 'Enter Scores' tab first.")
+        st.info("No scores recorded yet for this class.")
     else:
         selected_subj = st.selectbox("Select subject to view",
                                      subjects_with_scores, key="progress_subj")
@@ -317,9 +432,9 @@ with tab3:
             else:
                 rows.append({
                     "Student": student.name,
-                    "Latest": "—",
-                    "Average": "—",
-                    "Grade": "—",
+                    "Latest": "-",
+                    "Average": "-",
+                    "Grade": "-",
                     "Tests Taken": 0,
                     "Scores Over Time": "No scores yet",
                 })
@@ -330,9 +445,14 @@ with tab3:
         new_id = st.text_input("Student ID", placeholder="e.g. S17")
         new_name = st.text_input("Full Name", placeholder="e.g. John Doe")
         new_subject = st.text_input("Main Subject", placeholder="e.g. Math, Science")
+        class_options = [""] + st.session_state.available_classes
+        new_class = st.selectbox("Class", class_options, key="new_student_class")
         if st.button("Add Student"):
             if new_id and new_name:
-                brain.add_student(new_id, new_name, performance_score=0.5, current_topic=new_subject or "")
+                brain.add_student(new_id, new_name,
+                                  performance_score=0.5,
+                                  current_topic=new_subject or "",
+                                  class_id=new_class)
                 brain.save("brain_state.json")
                 st.success(f"Added {new_name}!")
                 st.rerun()
@@ -359,15 +479,15 @@ with tab4:
                 <th style="padding:6px 12px;">Score Range</th>
                 <th style="padding:6px 12px;">Meaning</th>
               </tr>
-              <tr style="background:#E8F8F5;"><td>A1</td><td>75–100%</td><td>Excellent</td></tr>
-              <tr><td>B2</td><td>70–74%</td><td>Very Good</td></tr>
-              <tr style="background:#FEF9E7;"><td>B3</td><td>65–69%</td><td>Good</td></tr>
-              <tr><td>C4</td><td>60–64%</td><td>Credit</td></tr>
-              <tr style="background:#FEF9E7;"><td>C5</td><td>55–59%</td><td>Credit</td></tr>
-              <tr><td>C6</td><td>50–54%</td><td>Credit</td></tr>
-              <tr style="background:#FEF9E7;"><td>D7</td><td>45–49%</td><td>Pass</td></tr>
-              <tr><td>E8</td><td>40–44%</td><td>Pass</td></tr>
-              <tr style="background:#FDEDEC;"><td>F9</td><td>0–39%</td><td>Fail</td></tr>
+              <tr style="background:#E8F8F5;"><td>A1</td><td>75-100%</td><td>Excellent</td></tr>
+              <tr><td>B2</td><td>70-74%</td><td>Very Good</td></tr>
+              <tr style="background:#FEF9E7;"><td>B3</td><td>65-69%</td><td>Good</td></tr>
+              <tr><td>C4</td><td>60-64%</td><td>Credit</td></tr>
+              <tr style="background:#FEF9E7;"><td>C5</td><td>55-59%</td><td>Credit</td></tr>
+              <tr><td>C6</td><td>50-54%</td><td>Credit</td></tr>
+              <tr style="background:#FEF9E7;"><td>D7</td><td>45-49%</td><td>Pass</td></tr>
+              <tr><td>E8</td><td>40-44%</td><td>Pass</td></tr>
+              <tr style="background:#FDEDEC;"><td>F9</td><td>0-39%</td><td>Fail</td></tr>
             </table>"""
 
             html = f"""
@@ -386,7 +506,8 @@ with tab4:
               .grade {{ font-weight: bold; }}
             </style></head>
             <body>
-            <h1>Class Report — {report_subj}</h1>
+            <h1>Class Report -- {report_subj}</h1>
+            <p><strong>Class:</strong> {selected_class or "All Students"}</p>
             <p><strong>Total students assessed:</strong> {result['total_students']}</p>
             """
 
@@ -396,19 +517,19 @@ with tab4:
                 info = TIER_LABELS[tier_name]
                 names = [(s["name"], s["predicted_score"]) for s in tier["students"]]
                 html += f"<div class='box {tier_css[tier_name]}'>"
-                html += f"<h2>{info['icon']} {info['label']} — {tier['count']} students</h2>"
+                html += f"<h2>{info['icon']} {info['label']} - {tier['count']} students</h2>"
                 html += f"<p class='note'>{info['note']}</p>"
                 if names:
                     for name, pscore in names:
                         grade = nigerian_grade(pscore)
                         desc = nigerian_grade_description(pscore)
-                        html += f"<div class='students'>- {name} <span class='grade'>({grade} — {desc})</span></div>"
+                        html += f"<div class='students'>- {name} <span class='grade'>({grade} - {desc})</span></div>"
                 else:
                     html += "<p>_No students in this group._</p>"
                 html += "</div>"
 
             html += waec_legend
-            html += f'<div class="footer">Generated by Smart Content Recommender — {pd.Timestamp.now().strftime("%Y-%m-%d %H:%M")}</div>'
+            html += f'<div class="footer">Generated by Smart Content Recommender - {pd.Timestamp.now().strftime("%Y-%m-%d %H:%M")}</div>'
             html += "</body></html>"
 
             st.download_button(

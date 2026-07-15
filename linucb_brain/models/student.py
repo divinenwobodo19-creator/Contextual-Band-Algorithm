@@ -6,6 +6,7 @@ class Student:
     """Student profile data model."""
     student_id: str
     name: str
+    class_id: str = ""  # e.g. "JSS1A", "SS2B"
     grade_history: Dict[str, List[float]] = field(default_factory=dict) # e.g {"math": [0.6, 0.75, 0.8]}
     session_count: int = 0
     performance_score: float = 0.0 # rolling average
