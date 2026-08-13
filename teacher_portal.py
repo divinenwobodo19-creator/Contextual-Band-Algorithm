@@ -11,6 +11,12 @@ import streamlit as st
 import pandas as pd
 sys.path.insert(0, os.path.dirname(__file__))
 from linucb_brain import Brain
+from linucb_brain.registry import (
+    load_registry, save_registry, ensure_school, add_class, remove_class,
+    get_schools, get_classes, get_school_by_id, get_class_by_id,
+    DEFAULT_SCHOOL,
+)
+from linucb_brain.models import normalize_label
 
 st.set_page_config(page_title="Teacher Portal", layout="wide")
 
@@ -20,15 +26,15 @@ CONFIG_FILE = "class_config.json"
 
 def nigerian_grade(score: float) -> str:
     p = score * 100
-    if p >= 75:  return "A1"
-    if p >= 70:  return "B2"
-    if p >= 65:  return "B3"
-    if p >= 60:  return "C4"
-    if p >= 55:  return "C5"
-    if p >= 50:  return "C6"
-    if p >= 45:  return "D7"
-    if p >= 40:  return "E8"
-    return "F9"
+    if p >= 75:  return "A"
+    if p >= 70:  return "B"
+    if p >= 65:  return "B"
+    if p >= 60:  return "C"
+    if p >= 55:  return "C"
+    if p >= 50:  return "C"
+    if p >= 45:  return "D"
+    if p >= 40:  return "E"
+    return "F"
 
 
 def nigerian_grade_description(score: float) -> str:
@@ -45,26 +51,22 @@ def nigerian_grade_description(score: float) -> str:
 
 
 def load_class_config() -> dict:
-    if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE) as f:
-            return json.load(f)
-    return {"term_subjects": [], "classes": []}
+    return load_registry(CONFIG_FILE)
 
 
 def save_class_config(config: dict) -> None:
-    with open(CONFIG_FILE, "w") as f:
-        json.dump(config, f)
+    save_registry(config, CONFIG_FILE)
 
 
 TIER_LABELS = {
     "remediation": {"label": "Needs Extra Help", "icon": "\U0001F534",
-        "note": "Scored below 40% (F9). Give them remedial exercises before moving on.",
+        "note": "Scored below 40% (F). Give them remedial exercises before moving on.",
         "color": "#E74C3C"},
     "on_track": {"label": "At Expected Level", "icon": "\U0001F7E1",
-        "note": "Scored 40-74% (E8 to B2). Continue with standard curriculum materials.",
+        "note": "Scored 40-74% (E to B). Continue with standard curriculum materials.",
         "color": "#F1C40F"},
     "ahead": {"label": "Ahead of Class", "icon": "\U0001F7E2",
-        "note": "Scored 75% or above (A1). Give them advanced or challenge materials.",
+        "note": "Scored 75% or above (A). Give them advanced or challenge materials.",
         "color": "#27AE60"},
 }
 
@@ -82,7 +84,6 @@ def get_brain():
         return Brain.load("school_brain_state.json")
     else:
         b = Brain(model_type="hybrid", alpha=1.5, n_clusters=3)
-        st.info("No saved brain found. Starting fresh.")
         return b
 
 brain = get_brain()
@@ -90,19 +91,32 @@ brain = get_brain()
 # Seed session state
 if "term_subjects" not in st.session_state:
     st.session_state.term_subjects = class_config.get("term_subjects", [])
-if "selected_class" not in st.session_state:
-    st.session_state.selected_class = ""
-if "available_classes" not in st.session_state:
-    st.session_state.available_classes = class_config.get("classes", [])
+if "selected_school_id" not in st.session_state:
+    schools = get_schools(class_config)
+    st.session_state.selected_school_id = schools[0]["school_id"] if schools else ""
+if "selected_class_id" not in st.session_state:
+    schools = get_schools(class_config)
+    first_classes = get_classes(class_config, st.session_state.selected_school_id)
+    st.session_state.selected_class_id = first_classes[0]["class_id"] if first_classes and st.session_state.selected_school_id else ""
 
-# ── Derived lists (filtered by selected class) ──────────────────────────────
+# ── Derived lists (filtered by selected school + class) ─────────────────────
 
-selected_class = st.session_state.selected_class
+selected_school_id = st.session_state.selected_school_id
+selected_class_id = st.session_state.selected_class_id
+selected_class_label = ""
+if selected_class_id:
+    cdef = get_class_by_id(class_config, selected_class_id, selected_school_id)
+    if cdef:
+        selected_class_label = cdef["label"]
+
 
 def get_class_students():
     all_students = sorted(brain.students.values(), key=lambda s: s.name)
-    if selected_class:
-        return [s for s in all_students if s.class_id == selected_class]
+    if selected_school_id and selected_class_id:
+        return [s for s in all_students
+                if s.school_id == selected_school_id and s.class_id == selected_class_id]
+    if selected_school_id:
+        return [s for s in all_students if s.school_id == selected_school_id]
     return all_students
 
 
@@ -113,73 +127,191 @@ def get_class_subjects():
         for subj in s.grade_history.keys()
     ))
 
-# ── Sidebar: Class management ───────────────────────────────────────────────
+
+def persist_registry():
+    save_class_config({
+        "term_subjects": st.session_state.term_subjects,
+        "schools": class_config["schools"],
+    })
+
+# ── Sidebar: School & Class management ──────────────────────────────────────
 
 with st.sidebar:
-    st.header("Class")
+    st.header("School & Class")
 
-    class_options = [""] + st.session_state.available_classes
-    class_labels = {"": "-- All Students --"}
-    for c in st.session_state.available_classes:
-        count = sum(1 for s in brain.students.values() if s.class_id == c)
-        class_labels[c] = f"{c} ({count} students)"
-
-    sel = st.selectbox(
-        "Select class",
-        class_options,
-        format_func=lambda x: class_labels.get(x, x),
-        key="selected_class",
+    school_options = get_schools(class_config)
+    school_labels = {s["school_id"]: s["name"] for s in school_options}
+    sel_school = st.selectbox(
+        "School",
+        [s["school_id"] for s in school_options],
+        index=([s["school_id"] for s in school_options].index(selected_school_id)
+               if selected_school_id in [s["school_id"] for s in school_options] else 0),
+        format_func=lambda x: school_labels.get(x, x),
+        key="selected_school_id",
     )
 
+    class_options = get_classes(class_config, selected_school_id)
+    class_labels = {}
+    for c in class_options:
+        count = sum(1 for s in brain.students.values()
+                    if s.school_id == selected_school_id and s.class_id == c["class_id"])
+        class_labels[c["class_id"]] = f"{c['label']} ({count} students)"
+    sel_class = st.selectbox(
+        "Class",
+        [c["class_id"] for c in class_options],
+        index=([c["class_id"] for c in class_options].index(selected_class_id)
+               if selected_class_id in [c["class_id"] for c in class_options] else 0),
+        format_func=lambda x: class_labels.get(x, x),
+        key="selected_class_id",
+    )
+
+    with st.expander("Manage Schools"):
+        st.caption("Create a new school. Each school gets its own classes.")
+        new_school = st.text_input("New school name", placeholder="e.g. Enugu High School",
+                                   key="new_school_input")
+        if st.button("Create School"):
+            name = new_school.strip().upper()
+            if name:
+                school = ensure_school(class_config, name)
+                st.session_state.selected_school_id = school["school_id"]
+                st.session_state.selected_class_id = ""
+                persist_registry()
+                st.rerun()
+
     with st.expander("Manage Classes"):
-        st.caption("Create a new class or remove existing ones.")
+        st.caption("Create or remove classes inside the selected school.")
         new_class = st.text_input("New class name", placeholder="e.g. JSS1A",
                                    key="new_class_input")
         if st.button("Create Class"):
-            name = new_class.strip().upper()
-            if name and name not in st.session_state.available_classes:
-                st.session_state.available_classes.append(name)
-                st.session_state.available_classes.sort()
-                save_class_config({
-                    "term_subjects": st.session_state.term_subjects,
-                    "classes": st.session_state.available_classes,
-                })
-                st.rerun()
-
-        if st.session_state.available_classes:
-            st.markdown("**Remove class**")
-            class_to_del = st.selectbox("Select class to remove",
-                                         [""] + st.session_state.available_classes,
-                                         key="del_class_sel")
-            if class_to_del and st.button("Delete Class", type="primary"):
-                st.session_state.available_classes.remove(class_to_del)
-                if st.session_state.selected_class == class_to_del:
-                    st.session_state.selected_class = ""
-                save_class_config({
-                    "term_subjects": st.session_state.term_subjects,
-                    "classes": st.session_state.available_classes,
-                })
-                st.rerun()
-
-        if selected_class:
-            st.markdown(f"**Move students to another class**")
-            students_in_class = [s for s in brain.students.values()
-                                 if s.class_id == selected_class]
-            if students_in_class:
-                target = st.selectbox("Move to",
-                                       [c for c in st.session_state.available_classes
-                                        if c != selected_class],
-                                       key="move_target")
-                if target and st.button("Move All"):
-                    for s in students_in_class:
-                        brain.students[s.student_id].class_id = target
-                    brain.save("brain_state.json")
+            label = new_class.strip().upper()
+            if label and selected_school_id:
+                cls = add_class(class_config, selected_school_id, label)
+                if cls:
+                    st.session_state.selected_class_id = cls["class_id"]
+                    persist_registry()
                     st.rerun()
+                else:
+                    st.warning("Class already exists in this school.")
+
+        if class_options:
+            st.markdown("**Remove class**")
+            class_to_del = st.selectbox(
+                "Select class to remove",
+                [c["class_id"] for c in class_options],
+                format_func=lambda x: class_labels.get(x, x),
+                key="del_class_sel")
+            if class_to_del and st.button("Delete Class", type="primary"):
+                remove_class(class_config, selected_school_id, class_to_del)
+                if st.session_state.selected_class_id == class_to_del:
+                    st.session_state.selected_class_id = ""
+                persist_registry()
+                st.rerun()
+
+        if selected_school_id and selected_class_id:
+            st.markdown("**Move students to another class**")
+            students_in_class = [s for s in brain.students.values()
+                                 if s.school_id == selected_school_id
+                                 and s.class_id == selected_class_id]
+            if students_in_class:
+                other_classes = [c for c in class_options if c["class_id"] != selected_class_id]
+                if other_classes:
+                    target = st.selectbox(
+                        "Move to",
+                        [c["class_id"] for c in other_classes],
+                        format_func=lambda x: class_labels.get(x, x),
+                        key="move_target")
+                    if st.button("Move All"):
+                        for s in students_in_class:
+                            brain.students[s.student_id].class_id = target
+                            brain.students[s.student_id].school_id = selected_school_id
+                            brain.students[s.student_id].touch()
+                        brain.save("brain_state.json")
+                        st.rerun()
+                else:
+                    st.caption("No other classes in this school yet.")
             else:
                 st.caption("No students in this class.")
 
 st.title("Teacher Portal")
 st.markdown("Enter weekly test scores -- see which students need extra help and what to give them.")
+
+# ── Onboarding for brand-new users ──────────────────────────────────────────
+total_students = len(brain.students)
+if total_students == 0 and not get_schools(class_config):
+    st.info(
+        "\U0001f4ac **Welcome! Let's get you started in 3 quick steps:**\n\n"
+        "1️⃣ **Create a school** — use the sidebar (click _Manage Schools_ → type a name → _Create School_)\n"
+        "2️⃣ **Create a class** — sidebar → _Manage Classes_ → e.g. _JSS1A_\n"
+        "3️⃣ **Add students** — use the _Add Student_ form below, then enter scores\n\n"
+        "Or click the button below to load demo data and explore right away:"
+    )
+    if st.button("\U0001f680 Load demo data (school + class + students)", use_container_width=True):
+        school = ensure_school(class_config, "Demo School")
+        cls = None
+        for c in school["classes"]:
+            if c["label"] == "JSS1A":
+                cls = c
+                break
+        if cls is None:
+            cls = add_class(class_config, school["school_id"], "JSS1A")
+        demo_data = [
+            ("S01", "Chinwe", 0.82, "Maths"), ("S02", "Emeka", 0.55, "Maths"),
+            ("S03", "Amina", 0.91, "Maths"), ("S04", "Tunde", 0.63, "Maths"),
+            ("S05", "Ngozi", 0.76, "English"), ("S06", "Chidi", 0.44, "English"),
+            ("S07", "Zainab", 0.88, "English"), ("S08", "Efe", 0.59, "English"),
+            ("S09", "Adaeze", 0.71, "Science"), ("S10", "Kelechi", 0.48, "Science"),
+            ("S11", "Fatima", 0.93, "Science"), ("S12", "Obinna", 0.37, "Science"),
+            ("S13", "Chioma", 0.79, "History"), ("S14", "Segun", 0.52, "History"),
+            ("S15", "Yetunde", 0.85, "History"), ("S16", "Musa", 0.41, "History"),
+        ]
+        for sid, name, grade, topic in demo_data:
+            brain.add_student(sid, name, performance_score=grade,
+                              current_topic=topic,
+                              school_id=school["school_id"], class_id=cls["class_id"])
+        brain.save("brain_state.json")
+        persist_registry()
+        st.session_state.selected_school_id = school["school_id"]
+        st.session_state.selected_class_id = cls["class_id"]
+        st.rerun()
+
+# ── Add Student form (always visible when data is low) ─────────────────────
+total_students = len(brain.students)
+if total_students < 30:
+    with st.expander("\u2795 Add a new student", expanded=total_students == 0):
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            new_id = st.text_input("Student ID", placeholder="e.g. S17",
+                                   key="global_new_id")
+        with c2:
+            new_name = st.text_input("Full Name", placeholder="e.g. John Doe",
+                                     key="global_new_name")
+        with c3:
+            new_subject = st.text_input("Main Subject", placeholder="e.g. Maths",
+                                        key="global_new_subj")
+        c4, c5 = st.columns(2)
+        with c4:
+            all_schools = get_schools(class_config)
+            new_school = st.selectbox(
+                "School", [s["school_id"] for s in all_schools],
+                format_func=lambda x: next((s["name"] for s in all_schools if s["school_id"] == x), x),
+                key="global_new_school")
+        with c5:
+            sel_classes = get_classes(class_config, new_school)
+            new_class = st.selectbox(
+                "Class", [c["class_id"] for c in sel_classes],
+                format_func=lambda x: next((c["label"] for c in sel_classes if c["class_id"] == x), x),
+                key="global_new_class")
+        if st.button("Add Student", key="global_add_btn", use_container_width=True):
+            if new_id and new_name and new_class:
+                brain.add_student(new_id, normalize_label(new_name),
+                                  performance_score=0.5,
+                                  current_topic=new_subject.strip() or "",
+                                  school_id=new_school, class_id=new_class)
+                brain.save("brain_state.json")
+                st.success(f"Added {normalize_label(new_name)}!")
+                st.rerun()
+            else:
+                st.warning("Student ID, name, and a class are required.")
 
 # Fresh copies filtered by selected class
 student_list = get_class_students()
@@ -223,25 +355,20 @@ with tab1:
                 c1.markdown(f"**{label}**")
                 if c2.button("Delete", key=f"del_subj_{i}", help=f"Remove {subj}"):
                     st.session_state.term_subjects.pop(i)
-                    save_class_config({
-                        "term_subjects": st.session_state.term_subjects,
-                        "classes": st.session_state.available_classes,
-                    })
+                    persist_registry()
                     st.rerun()
             st.text_input("Add a subject", key="add_subj_input",
                           placeholder="Subject name", label_visibility="collapsed")
             if st.button("Add"):
-                new_s = st.session_state.get("add_subj_input", "").strip()
+                new_s = normalize_label(st.session_state.get("add_subj_input", ""))
                 if new_s and new_s not in st.session_state.term_subjects:
                     st.session_state.term_subjects.append(new_s)
-                    save_class_config({
-                        "term_subjects": st.session_state.term_subjects,
-                        "classes": st.session_state.available_classes,
-                    })
+                    persist_registry()
                     st.rerun()
 
     subject = st.text_input("Subject name (e.g. Basic Science - Week 4, Algebra - Week 1)",
                             placeholder="Type the subject or topic name", key="subject_input")
+    subject = normalize_label(subject)
 
     # ── Score entry table ────────────────────────────────────────────────────
     if not student_list:
@@ -278,7 +405,7 @@ with tab1:
             },
             hide_index=True,
             use_container_width=True,
-            key=f"score_editor_{subject}_{selected_class}",
+            key=f"score_editor_{subject}_{selected_class_id}",
         )
 
         # ── Quick preview bar ────────────────────────────────────────────────
@@ -319,8 +446,8 @@ with tab1:
                 row = edited_df.iloc[i]
                 if row["Absent"]:
                     continue
-                new_name = row["Student"]
-                if new_name != student.name:
+                new_name = " ".join(row["Student"].split())
+                if new_name and new_name != student.name:
                     brain.students[student.student_id].name = new_name
                     name_changed = True
                 score = row["Score (0-100)"]
@@ -332,10 +459,7 @@ with tab1:
             with st.spinner("Saving scores to model..."):
                 result = brain.bulk_update(entries)
                 brain.save("brain_state.json")
-                save_class_config({
-                    "term_subjects": st.session_state.term_subjects,
-                    "classes": st.session_state.available_classes,
-                })
+                persist_registry()
             parts = [f"Scores saved for {result['processed']} students in \"{subject}\"."]
             if absent_count:
                 parts.append(f"{absent_count} student(s) marked absent.")
@@ -346,29 +470,37 @@ with tab1:
 
     with st.expander("Load demo students (Nigerian names)"):
         demo_data = [
-            ("S01", "Chinwe", 0.82, "Mathematics"),
-            ("S02", "Emeka", 0.55, "Mathematics"),
-            ("S03", "Amina", 0.91, "Mathematics"),
-            ("S04", "Tunde", 0.63, "Mathematics"),
-            ("S05", "Ngozi", 0.76, "English"),
-            ("S06", "Chidi", 0.44, "English"),
-            ("S07", "Zainab", 0.88, "English"),
-            ("S08", "Efe", 0.59, "English"),
-            ("S09", "Adaeze", 0.71, "Science"),
-            ("S10", "Kelechi", 0.48, "Science"),
-            ("S11", "Fatima", 0.93, "Science"),
-            ("S12", "Obinna", 0.37, "Science"),
-            ("S13", "Chioma", 0.79, "History"),
-            ("S14", "Segun", 0.52, "History"),
-            ("S15", "Yetunde", 0.85, "History"),
-            ("S16", "Musa", 0.41, "History"),
+            ("S01", "Chinwe", 0.82, "Maths"), ("S02", "Emeka", 0.55, "Maths"),
+            ("S03", "Amina", 0.91, "Maths"), ("S04", "Tunde", 0.63, "Maths"),
+            ("S05", "Ngozi", 0.76, "English"), ("S06", "Chidi", 0.44, "English"),
+            ("S07", "Zainab", 0.88, "English"), ("S08", "Efe", 0.59, "English"),
+            ("S09", "Adaeze", 0.71, "Science"), ("S10", "Kelechi", 0.48, "Science"),
+            ("S11", "Fatima", 0.93, "Science"), ("S12", "Obinna", 0.37, "Science"),
+            ("S13", "Chioma", 0.79, "History"), ("S14", "Segun", 0.52, "History"),
+            ("S15", "Yetunde", 0.85, "History"), ("S16", "Musa", 0.41, "History"),
         ]
-        if st.button("Load 16 demo students"):
-            for sid, name, grade, topic in demo_data:
-                brain.add_student(sid, name, performance_score=grade, current_topic=topic)
-            brain.save("brain_state.json")
-            st.success("Demo students loaded! Select or create a class in the sidebar, then assign students.")
-            st.rerun()
+        load_schools = get_schools(class_config)
+        if not load_schools:
+            st.warning("Create a school in the sidebar first.")
+        else:
+            target_school = st.selectbox(
+                "School", [s["school_id"] for s in load_schools],
+                format_func=lambda x: next((s["name"] for s in load_schools if s["school_id"] == x), x),
+                key="demo_school")
+            t_classes = get_classes(class_config, target_school)
+            target_class = st.selectbox(
+                "Assign all to class", [c["class_id"] for c in t_classes],
+                format_func=lambda x: next((c["label"] for c in t_classes if c["class_id"] == x), x),
+                key="demo_class_target")
+            if st.button("Load 16 demo students"):
+                cid = target_class if target_class else ""
+                for sid, name, grade, topic in demo_data:
+                    brain.add_student(sid, name, performance_score=grade,
+                                      current_topic=topic,
+                                      school_id=target_school, class_id=cid)
+                brain.save("brain_state.json")
+                st.success("Demo students loaded! Select the class in the sidebar to see them.")
+                st.rerun()
 
 # ============================================================================
 # TAB 2 — Class Groups
@@ -399,6 +531,15 @@ with tab2:
                         st.markdown(f"- {name} ({grade})")
                 else:
                     st.markdown("_No students in this group._")
+
+        not_assessed = [s.name for s in student_list
+                        if not s.grade_history.get(subj)]
+        with st.expander(f"Not yet assessed: {len(not_assessed)} students"):
+            if not_assessed:
+                for name in not_assessed:
+                    st.markdown(f"- {name}")
+            else:
+                st.caption("Everyone in this class has at least one score for this subject.")
 
 # ============================================================================
 # TAB 3 — Student Progress
@@ -442,20 +583,40 @@ with tab3:
         st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
 
     with st.expander("Register a new student"):
-        new_id = st.text_input("Student ID", placeholder="e.g. S17")
-        new_name = st.text_input("Full Name", placeholder="e.g. John Doe")
-        new_subject = st.text_input("Main Subject", placeholder="e.g. Math, Science")
-        class_options = [""] + st.session_state.available_classes
-        new_class = st.selectbox("Class", class_options, key="new_student_class")
-        if st.button("Add Student"):
-            if new_id and new_name:
-                brain.add_student(new_id, new_name,
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            new_id = st.text_input("Student ID", placeholder="e.g. S17",
+                                   key="tab3_new_id")
+        with c2:
+            new_name = st.text_input("Full Name", placeholder="e.g. John Doe",
+                                     key="tab3_new_name")
+        with c3:
+            new_subject = st.text_input("Main Subject", placeholder="e.g. Maths",
+                                        key="tab3_new_subj")
+        c4, c5 = st.columns(2)
+        with c4:
+            tab3_schools = get_schools(class_config)
+            new_school = st.selectbox(
+                "School", [s["school_id"] for s in tab3_schools],
+                format_func=lambda x: next((s["name"] for s in tab3_schools if s["school_id"] == x), x),
+                key="tab3_new_school")
+        with c5:
+            tab3_classes = get_classes(class_config, new_school)
+            new_class = st.selectbox(
+                "Class", [c["class_id"] for c in tab3_classes],
+                format_func=lambda x: next((c["label"] for c in tab3_classes if c["class_id"] == x), x),
+                key="tab3_new_class")
+        if st.button("Add Student", key="tab3_add_btn", use_container_width=True):
+            if new_id and new_name and new_class:
+                brain.add_student(new_id, normalize_label(new_name),
                                   performance_score=0.5,
-                                  current_topic=new_subject or "",
-                                  class_id=new_class)
+                                  current_topic=new_subject.strip() or "",
+                                  school_id=new_school, class_id=new_class)
                 brain.save("brain_state.json")
-                st.success(f"Added {new_name}!")
+                st.success(f"Added {normalize_label(new_name)}!")
                 st.rerun()
+            else:
+                st.warning("Student ID, name, and a class are required.")
 
 # ============================================================================
 # TAB 4 — Printable Report
@@ -507,7 +668,7 @@ with tab4:
             </style></head>
             <body>
             <h1>Class Report -- {report_subj}</h1>
-            <p><strong>Class:</strong> {selected_class or "All Students"}</p>
+            <p><strong>Class:</strong> {selected_class_label or "All Students"}</p>
             <p><strong>Total students assessed:</strong> {result['total_students']}</p>
             """
 
@@ -528,6 +689,16 @@ with tab4:
                     html += "<p>_No students in this group._</p>"
                 html += "</div>"
 
+            not_assessed = [s.name for s in student_list
+                            if not s.grade_history.get(report_subj)]
+            if not_assessed:
+                html += "<h2>\u23f3 Not yet assessed</h2>"
+                html += "<p class='note'>These students have no scores for this subject yet.</p>"
+                html += "<div class='students'>"
+                for name in not_assessed:
+                    html += f"<div class='students'>- {name}</div>"
+                html += "</div>"
+
             html += waec_legend
             html += f'<div class="footer">Generated by Smart Content Recommender - {pd.Timestamp.now().strftime("%Y-%m-%d %H:%M")}</div>'
             html += "</body></html>"
@@ -543,3 +714,21 @@ with tab4:
             st.divider()
             st.markdown("### Preview")
             st.components.v1.html(html, height=600, scrolling=True)
+
+# ============================================================================
+# FOOTER — Run Tests
+# ============================================================================
+with st.expander("\u2699\ufe0f Diagnostics — Run Tests"):
+    if st.button("Run all 20 tests", type="secondary", use_container_width=True):
+        import subprocess, sys
+        with st.spinner("Running tests..."):
+            r = subprocess.run(
+                [sys.executable, "-m", "pytest", "tests/", "-v", "--tb=short"],
+                capture_output=True, text=True, timeout=120,
+            )
+        out = r.stdout + r.stderr
+        st.code(out, language="bash")
+        if r.returncode == 0:
+            st.success(f"All tests passed! (exit code {r.returncode})")
+        else:
+            st.error(f"Some tests failed (exit code {r.returncode})")

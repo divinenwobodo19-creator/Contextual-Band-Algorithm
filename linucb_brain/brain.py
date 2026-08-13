@@ -439,13 +439,19 @@ class Brain:
           - ahead (Ahead of Class):           predicted >= 0.75 (A1 — Excellent)
 
         Each tier includes student info and a recommended difficulty.
+
+        Only students with actual scores for the subject are tiered. Students
+        with no data for the subject are excluded from tiering (reports must
+        not imply a grade for a subject the student never took).
         """
         with self._lock:
             results = []
             for sid, student in self.students.items():
+                n_attempts = len(student.grade_history.get(subject, []))
+                if n_attempts == 0:
+                    continue  # never assessed in this subject → skip tiering
                 pred = self.predict_grade(sid, subject)
                 topics_seen = subject in student.grade_history
-                n_attempts = len(student.grade_history.get(subject, []))
                 results.append({
                     "student_id": sid,
                     "name": student.name,
@@ -453,9 +459,6 @@ class Brain:
                     "topics_seen": topics_seen,
                     "attempts": n_attempts,
                 })
-
-            if not results:
-                return {"subject": subject, "tiers": {}, "total": 0}
 
             tiers = {1: [], 2: [], 3: []}
             tier_labels = {1: "remediation", 2: "on_track", 3: "ahead"}
@@ -465,6 +468,19 @@ class Brain:
                 2: "Scored 40–74% (E8 to B2). On track — continue with standard curriculum.",
                 3: "Scored 75% or above (A1). Ahead of class — give advanced materials.",
             }
+
+            if not results:
+                return {
+                    "subject": subject,
+                    "total_students": 0,
+                    "tiers": {
+                        tier_labels[k]: {"students": [], "count": 0,
+                                         "recommended_difficulty": tier_diff[k],
+                                         "note": tier_desc[k]}
+                        for k in (1, 2, 3)
+                    },
+                    "scope": "assessed_only",
+                }
 
             for r in results:
                 p = r["predicted"]
@@ -493,6 +509,7 @@ class Brain:
                     }
                     for k, v in tiers.items()
                 },
+                "scope": "assessed_only",
             }
         """
         Meta-Learner: Automatically adjust alpha and gamma based on neural score.

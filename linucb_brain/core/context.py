@@ -65,7 +65,7 @@ def build_context_split(student: Student, content: Content) -> Tuple[np.ndarray,
         region_code
     ], dtype=float)
     
-    # 2. Content Features (Arm-specific)
+    # 2.Content Features (Arm-specific)
     difficulty = (content.difficulty - 1) / 4.0
     topic_match = 1.0 if student.current_topic == c_topic else 0.0
     
